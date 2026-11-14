@@ -112,3 +112,33 @@ export const skillsApi = {
 };
 
 export const TOOL_LABEL: Record<ToolId, string> = { claude: "Claude Code", codex: "Codex", agy: "Antigravity" };
+
+// ---------------------------------------------------------------- conversas (sync entre perfis)
+
+export type Presence = "on" | "off" | "diverged";
+
+export interface Conversation {
+  id: string;
+  project: string;
+  cwd: string | null;
+  title: string;
+  updatedAt: number;
+  size: number;
+  profiles: { profile: string; state: Presence }[];
+}
+
+export interface ConversationsState {
+  tool: ToolId;
+  supported: boolean;
+  note: string | null;
+  profiles: string[];
+  conversations: Conversation[];
+}
+
+export const convApi = {
+  get: (tool: ToolId) => invoke<ConversationsState>("get_conversations", { tool }),
+  set: (tool: ToolId, project: string, id: string, profile: string, enabled: boolean) =>
+    invoke<ConversationsState>("set_conversation_sync", { tool, project, id, profile, enabled }),
+  resync: (tool: ToolId, project: string, id: string) =>
+    invoke<ConversationsState>("resync_conversation", { tool, project, id }),
+};

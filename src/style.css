@@ -144,7 +144,7 @@ code { font: 12px ui-monospace, Consolas, monospace; }
 .dialog-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
 /* seletor de telas */
-.views { display: flex; gap: 2px; margin-left: 14px; padding: 2px; border-radius: 8px; background: var(--hover); }
+.views { display: flex; gap: 2px; margin-left: 0; padding: 2px; border-radius: 8px; background: var(--hover); }
 .view-btn { background: transparent; color: var(--muted); padding: 3px 12px; border-radius: 6px; }
 .view-btn:hover { color: var(--text); }
 .view-btn.active { background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / .12); }
@@ -173,3 +173,29 @@ table.grid { width: 100%; border-collapse: separate; border-spacing: 0; backgrou
 
 .args-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-direction: row; }
 .muted-inline { color: var(--muted); font-style: italic; }
+
+/* conversas */
+.page.wide { max-width: none; }
+.tabs.flat { background: transparent; padding: 0; margin-bottom: 4px; border-bottom: 1px solid var(--border); align-items: center; }
+.tabs.flat .tab.active { background: var(--card); }
+.toggle-inline { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; cursor: pointer; padding-right: 4px; }
+.conv-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 560px; user-select: text; }
+.filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0 2px; }
+.filters .grow { flex: 1; min-width: 200px; width: auto; }
+select {
+  font: inherit; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--border);
+  background: var(--card); color: var(--text); max-width: 240px;
+}
+.grid th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.grid th.sortable:hover { color: var(--text); }
+.sort-ind { margin-left: 4px; font-size: 9px; }
+.pager { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; }
+.pager-nav { display: flex; align-items: center; gap: 4px; }
+.page-num { padding: 0 8px; color: var(--muted); white-space: nowrap; }
+.grid td.conv-cell { width: 100%; max-width: 0; }
+.conv-title { max-width: none; }
+.statusbar .version {
+  background: transparent; color: var(--muted); padding: 0 0 0 10px; border: none; border-left: 1px solid var(--border);
+  border-radius: 0; font-size: 12px; white-space: nowrap; cursor: pointer;
+}
+.statusbar .version:hover { color: var(--accent); }

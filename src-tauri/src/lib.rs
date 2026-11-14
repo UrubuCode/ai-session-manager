@@ -1,3 +1,4 @@
+mod conversations;
 mod env;
 mod explorer;
 mod links;
@@ -156,6 +157,33 @@ fn open_skill_folder(name: Option<String>) -> Result<(), String> {
     reveal(&dir)
 }
 
+// ---------------------------------------------------------------- conversas
+
+#[tauri::command]
+fn get_conversations(tool: Tool) -> conversations::ConversationsState {
+    conversations::Conversations::from_env(tool).state()
+}
+
+#[tauri::command]
+fn set_conversation_sync(
+    tool: Tool,
+    project: String,
+    id: String,
+    profile: String,
+    enabled: bool,
+) -> Result<conversations::ConversationsState, String> {
+    let c = conversations::Conversations::from_env(tool);
+    c.set(&project, &id, &profile, enabled)?;
+    Ok(c.state())
+}
+
+#[tauri::command]
+fn resync_conversation(tool: Tool, project: String, id: String) -> Result<conversations::ConversationsState, String> {
+    let c = conversations::Conversations::from_env(tool);
+    c.resync(&project, &id)?;
+    Ok(c.state())
+}
+
 /// Parâmetros extras usados sempre que o perfil é aberto.
 #[tauri::command]
 fn set_profile_args(app: AppHandle, tool: Tool, name: String, args: String) -> Result<AppState, String> {
@@ -269,7 +297,10 @@ pub fn run() {
             set_skill_link,
             make_skill_global,
             create_skill,
-            open_skill_folder
+            open_skill_folder,
+            get_conversations,
+            set_conversation_sync,
+            resync_conversation
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o aplicativo");

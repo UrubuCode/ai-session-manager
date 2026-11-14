@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
+import { check } from "@tauri-apps/plugin-updater";
 import {
   api, formatDate, formatLeft, sessionStatus,
   type AppState, type ProfileInfo, type ToolId, type ToolState,
@@ -7,9 +9,9 @@ import {
 import { Dialog, type DialogRequest } from "./Dialog";
 import { Updater } from "./Updater";
 import { SkillsView } from "./SkillsView";
+import { ConversationsView } from "./ConversationsView";
 
-type Menu = "arquivo" | "perfil" | null;
-type View = "perfis" | "skills";
+type View = "perfis" | "conversas" | "skills";
 interface Ctx { x: number; y: number; name: string }
 
 const TOOL_KEY = "selectedTool";
@@ -23,9 +25,25 @@ export default function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [status, setStatus] = useState<{ text: string; error?: boolean }>({ text: "Pronto" });
   const [dialog, setDialog] = useState<DialogRequest | null>(null);
-  const [menu, setMenu] = useState<Menu>(null);
   const [ctx, setCtx] = useState<Ctx | null>(null);
   const [view, setView] = useState<View>("perfis");
+  const [version, setVersion] = useState("");
+  useEffect(() => { getVersion().then(setVersion).catch(() => {}); }, []);
+
+  const checkUpdates = async () => {
+    setStatus({ text: "Procurando atualizações…" });
+    try {
+      const u = await check();
+      if (u) {
+        setStatus({ text: `Nova versão ${u.version} disponível — veja a faixa no topo` });
+        emit("update-available", u.version);
+      } else {
+        setStatus({ text: `Você já está na versão mais recente (v${version})` });
+      }
+    } catch (e) {
+      setStatus({ text: `Não foi possível verificar atualizações: ${e}`, error: true });
+    }
+  };
   const busy = useRef(false);
 
   const ask = (r: Omit<DialogRequest, "resolve">) =>
@@ -162,7 +180,7 @@ export default function App() {
     else if (k === "Enter") (tool?.supportsDefault ? setDefault() : openTool());
     else if (k === "F2") rename();
     else if (k === "Delete") remove();
-    else if (k === "Escape") { setMenu(null); setCtx(null); return; }
+    else if (k === "Escape") { setCtx(null); return; }
     else if (k === "ArrowDown" || k === "ArrowUp") {
       if (!list.length) return;
       const i = selected ? list.indexOf(selected) : -1;
@@ -172,7 +190,7 @@ export default function App() {
   };
   useEffect(() => {
     const h = (e: KeyboardEvent) => keys.current?.(e);
-    const close = () => { setMenu(null); setCtx(null); };
+    const close = () => setCtx(null);
     window.addEventListener("keydown", h);
     window.addEventListener("click", close);
     window.addEventListener("blur", close);
@@ -189,24 +207,11 @@ export default function App() {
   return (
     <div className="app" onContextMenu={(e) => e.preventDefault()}>
       <nav className="menubar" onClick={(e) => e.stopPropagation()}>
-        <MenuButton id="arquivo" label="Arquivo" open={menu} setOpen={setMenu}>
-          <Item label={`Novo perfil de ${tLabel}…`} hint="Ctrl+N" onClick={create} />
-          <Item label="Atualizar" hint="F5" onClick={() => load("Atualizado")} />
-        </MenuButton>
-        <MenuButton id="perfil" label="Perfil" open={menu} setOpen={setMenu}>
-          {tool?.supportsDefault && (
-            <Item label="Usar como padrão" hint="Enter" onClick={() => setDefault()} disabled={!profile || profile.isSelected} />
-          )}
-          <Item label={`Abrir ${tLabel}`} hint="Ctrl+T" onClick={() => openTool()} disabled={!profile || !tool?.installed} />
-          <Item label="Abrir pasta" hint="Ctrl+O" onClick={() => openFolder()} disabled={!profile} />
-          <Item label="Renomear…" hint="F2" onClick={() => rename()} disabled={!profile || profile.isDefaultProfile} />
-          <Item label="Excluir…" hint="Del" onClick={() => remove()} disabled={!profile || profile.isDefaultProfile} danger />
-        </MenuButton>
         <div className="views" role="tablist">
-          {(["perfis", "skills"] as View[]).map((v) => (
+          {(["perfis", "conversas", "skills"] as View[]).map((v) => (
             <button key={v} role="tab" aria-selected={view === v} className={"view-btn" + (view === v ? " active" : "")}
               onClick={() => setView(v)}>
-              {v === "perfis" ? "Perfis" : "Skills"}
+              {v === "perfis" ? "Perfis" : v === "conversas" ? "Conversas" : "Skills"}
             </button>
           ))}
         </div>
@@ -218,6 +223,12 @@ export default function App() {
 
       <Updater />
 
+      {view === "conversas" && state && (
+        <div className="main scroll">
+          <ConversationsView initialTool={t} setStatus={setStatus}
+            installed={Object.fromEntries(state.tools.map((x) => [x.tool, x.installed])) as Record<ToolId, boolean>} />
+        </div>
+      )}
       {view === "skills" && state && (
         <div className="main scroll">
           <SkillsView ask={ask} setStatus={setStatus}
@@ -262,7 +273,7 @@ export default function App() {
                 badge={tool?.supportsDefault && p.isSelected ? "padrão" : null}
                 onSelect={() => setSelected(p.name)}
                 onOpen={() => (tool?.supportsDefault ? setDefault(p.name) : openTool(p.name))}
-                onContext={(x, y) => { setSelected(p.name); setMenu(null); setCtx({ x, y, name: p.name }); }} />
+                onContext={(x, y) => { setSelected(p.name); setCtx({ x, y, name: p.name }); }} />
             ))}
           </ul>
         </aside>
@@ -281,6 +292,11 @@ export default function App() {
       <footer className={"statusbar" + (status.error ? " error" : "")}>
         <span className="status-text" title={status.text}>{status.text}</span>
         <span className="path" title={tool?.profilesRoot}>{tool?.profilesRoot}</span>
+        {version && (
+          <button className="version" onClick={checkUpdates} title="Clique para procurar atualizações">
+            AI Session Manager v{version}
+          </button>
+        )}
       </footer>
 
       {ctx && (() => {
@@ -306,20 +322,6 @@ export default function App() {
 
 function ToolMark({ tool }: { tool: ToolId }) {
   return <span className={"mark mark-" + tool} aria-hidden="true">{tool === "claude" ? "C" : tool === "codex" ? "X" : "A"}</span>;
-}
-
-function MenuButton(props: { id: Exclude<Menu, null>; label: string; open: Menu; setOpen: (m: Menu) => void; children: React.ReactNode }) {
-  const isOpen = props.open === props.id;
-  return (
-    <div className="menu-root">
-      <button className={"menu-btn" + (isOpen ? " open" : "")}
-        onClick={() => props.setOpen(isOpen ? null : props.id)}
-        onMouseEnter={() => props.open && props.setOpen(props.id)}>
-        {props.label}
-      </button>
-      {isOpen && <div className="menu" onClick={() => props.setOpen(null)}>{props.children}</div>}
-    </div>
-  );
 }
 
 function Item(p: { label: string; hint?: string; onClick: () => void; disabled?: boolean; danger?: boolean }) {
@@ -367,9 +369,9 @@ function Detail(props: {
         </div>
         <div className="detail-actions">
           {tool.supportsDefault && (
-            <button onClick={props.onDefault} disabled={p.isSelected}>{p.isSelected ? "É o padrão" : "Usar como padrão"}</button>
+            <button onClick={props.onDefault} disabled={p.isSelected} title="Enter ou duplo-clique na lista">{p.isSelected ? "É o padrão" : "Usar como padrão"}</button>
           )}
-          <button className={tool.supportsDefault ? "ghost" : ""} onClick={props.onOpen} disabled={!tool.installed}>
+          <button className={tool.supportsDefault ? "ghost" : ""} onClick={props.onOpen} disabled={!tool.installed} title="Ctrl+T">
             {p.loggedIn ? `Abrir ${tool.label}` : "Abrir e fazer login"}
           </button>
         </div>
@@ -406,10 +408,10 @@ function Detail(props: {
       </div>
 
       <div className="detail-footer">
-        <button className="ghost" onClick={props.onFolder}>Abrir pasta</button>
+        <button className="ghost" onClick={props.onFolder} title="Ctrl+O">Abrir pasta</button>
         {!p.isDefaultProfile && <>
-          <button className="ghost" onClick={props.onRename}>Renomear</button>
-          <button className="danger" onClick={props.onDelete}>Excluir</button>
+          <button className="ghost" onClick={props.onRename} title="F2">Renomear</button>
+          <button className="danger" onClick={props.onDelete} title="Del">Excluir</button>
         </>}
       </div>
 

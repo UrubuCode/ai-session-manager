@@ -19,11 +19,12 @@ dependencies = [
 
 [[package]]
 name = "ai-session-manager"
-version = "3.3.0"
+version = "3.4.0"
 dependencies = [
  "base64 0.22.1",
  "dirs 6.0.0",
  "junction",
+ "same-file",
  "serde",
  "serde_json",
  "tauri",
