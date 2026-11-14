@@ -30,7 +30,7 @@ fn ps_quote(s: &str) -> String {
 }
 
 /// Script PowerShell que prepara o ambiente e roda a ferramenta.
-pub fn script(tool: Tool, env: &[(&str, Option<String>)], folder: &Path, color_hint: bool) -> String {
+pub fn script(tool: Tool, env: &[(&str, Option<String>)], folder: &Path, color_hint: bool, args: &str) -> String {
     let mut lines: Vec<String> = SESSION_MARKERS
         .iter()
         .map(|k| format!("Remove-Item Env:{k} -ErrorAction SilentlyContinue"))
@@ -45,7 +45,8 @@ pub fn script(tool: Tool, env: &[(&str, Option<String>)], folder: &Path, color_h
         lines.push("if (-not $env:COLORTERM) { $env:COLORTERM = 'truecolor' }".into());
     }
     lines.push(format!("Set-Location -LiteralPath {}", ps_quote(&folder.display().to_string())));
-    lines.push(tool.command().into());
+    let args = args.trim();
+    lines.push(if args.is_empty() { tool.command().to_string() } else { format!("{} {args}", tool.command()) });
     lines.join("; ")
 }
 
@@ -62,13 +63,15 @@ pub fn open(store: &Store, name: &str, cwd: Option<&Path>) -> Result<(), String>
     let tool = store.tool;
     store.ensure_shared_links(name); // perfis antigos ganham links novos
     let env = store.launch_env(name)?;
+    // Parâmetros extras configurados no perfil (ex.: --model opus).
+    let args = crate::settings::args(tool, name).unwrap_or_default();
     let folder = cwd.map(Path::to_path_buf).or_else(dirs::home_dir).unwrap_or_else(|| PathBuf::from("."));
     let title = match folder.file_name() {
         Some(f) => format!("{} [{name}] - {}", tool.short(), f.to_string_lossy()),
         None => format!("{} [{name}] - {}", tool.short(), folder.display()),
     };
     let wt = windows_terminal();
-    let encoded = encode(&script(tool, &env, &folder, wt.is_none()));
+    let encoded = encode(&script(tool, &env, &folder, wt.is_none(), &args));
 
     let mut cmd = match &wt {
         Some(wt) => {
@@ -104,12 +107,13 @@ mod tests {
             &[("USERPROFILE", Some(r"C:\Users\o'neil\.agy-profiles\x".into())), ("CODEX_HOME", None)],
             Path::new(r"C:\proj"),
             true,
+            r"--add-dir 'C:\x' --model y",
         );
         assert!(s.contains(r"$env:USERPROFILE = 'C:\Users\o''neil\.agy-profiles\x'"));
         assert!(s.contains("Remove-Item Env:CODEX_HOME"));
         assert!(s.contains("Remove-Item Env:CLAUDE_CODE_CHILD_SESSION"));
         assert!(s.contains("COLORTERM"));
-        assert!(s.trim_end().ends_with("agy"));
+        assert!(s.trim_end().ends_with(r"agy --add-dir 'C:\x' --model y"), "{s}");
         // base64 sem ';' — o Windows Terminal trata ';' como separador
         assert!(!encode(&s).contains(';'));
     }

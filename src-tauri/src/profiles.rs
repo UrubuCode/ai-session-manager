@@ -39,6 +39,8 @@ pub struct ProfileInfo {
     pub scopes: Vec<String>,
     /// Informações extras específicas da ferramenta.
     pub details: Vec<Detail>,
+    /// Parâmetros extras ao abrir a ferramenta neste perfil (configurável no app).
+    pub extra_args: Option<String>,
     pub error: Option<String>,
 }
 
@@ -125,33 +127,7 @@ fn email_in_log(p: &Path) -> Option<String> {
         .map(String::from)
 }
 
-/// Remove links (junctions/symlinks) sem seguir para o destino.
-fn remove_link(p: &Path) -> std::io::Result<()> {
-    fs::remove_dir(p).or_else(|_| fs::remove_file(p))
-}
-
-fn is_link(p: &Path) -> bool {
-    fs::symlink_metadata(p).map(|m| m.file_type().is_symlink()).unwrap_or(false)
-        || junction_target(p).is_some()
-}
-
-#[cfg(windows)]
-fn junction_target(p: &Path) -> Option<PathBuf> {
-    junction::get_target(p).ok()
-}
-#[cfg(not(windows))]
-fn junction_target(_p: &Path) -> Option<PathBuf> {
-    None
-}
-
-#[cfg(windows)]
-fn make_dir_link(target: &Path, link: &Path) -> std::io::Result<()> {
-    junction::create(target, link)
-}
-#[cfg(not(windows))]
-fn make_dir_link(target: &Path, link: &Path) -> std::io::Result<()> {
-    std::os::unix::fs::symlink(target, link)
-}
+use crate::links::{is_link, make_dir_link, remove_link};
 
 /// Existe a credencial genérica no Gerenciador de Credenciais do Windows?
 #[cfg(windows)]
@@ -234,6 +210,7 @@ impl Store {
             refresh_expires_at: None,
             scopes: vec![],
             details: vec![],
+            extra_args: None,
             error: None,
         };
         let mut errors = vec![];
@@ -414,13 +391,16 @@ impl Store {
             }
             if !src.is_dir() {
                 // .ssh ausente não é erro; as pastas de configuração são criadas.
-                if d.starts_with('.') {
+                if *d == ".ssh" {
                     continue;
                 }
                 if let Err(e) = fs::create_dir_all(&src) {
                     warnings.push(format!("não foi possível criar '{d}': {e}"));
                     continue;
                 }
+            }
+            if let Some(parent) = dst.parent() {
+                let _ = fs::create_dir_all(parent);
             }
             if let Err(e) = make_dir_link(&src, &dst) {
                 warnings.push(format!("não foi possível ligar '{d}': {e}"));

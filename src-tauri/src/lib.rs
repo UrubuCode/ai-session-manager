@@ -1,6 +1,9 @@
 mod env;
 mod explorer;
+mod links;
 mod profiles;
+mod settings;
+mod skills;
 mod terminal;
 mod tools;
 mod tray;
@@ -20,7 +23,11 @@ pub struct AppState {
 
 fn tool_state(tool: Tool) -> ToolState {
     let env = tool.env_var().and_then(env::get);
-    Store::from_env(tool).state(env)
+    let mut s = Store::from_env(tool).state(env);
+    for p in &mut s.profiles {
+        p.extra_args = settings::args(tool, &p.name);
+    }
+    s
 }
 
 fn state() -> AppState {
@@ -90,6 +97,7 @@ fn rename_profile(app: AppHandle, tool: Tool, old: String, new: String) -> Resul
     let s = Store::from_env(tool);
     let was_selected = tool.supports_default() && is_selected(tool, &old);
     let n = s.rename(&old, &new)?;
+    settings::rename(tool, &old, &n);
     if was_selected {
         set_tool_env(tool, s.env_for(&n)?.as_deref())?;
     }
@@ -101,9 +109,58 @@ fn delete_profile(app: AppHandle, tool: Tool, name: String) -> Result<AppState, 
     let s = Store::from_env(tool);
     let was_selected = tool.supports_default() && is_selected(tool, &name);
     s.delete(&name)?;
+    settings::remove(tool, &name);
     if was_selected {
         set_tool_env(tool, None)?;
     }
+    sync_menu(&app)
+}
+
+// ---------------------------------------------------------------- skills globais
+
+#[tauri::command]
+fn get_skills() -> skills::SkillsState {
+    skills::Skills::from_env().state()
+}
+
+#[tauri::command]
+fn set_skill_link(name: String, tool: Tool, enabled: bool) -> Result<skills::SkillsState, String> {
+    let sk = skills::Skills::from_env();
+    sk.set_link(&name, tool, enabled)?;
+    Ok(sk.state())
+}
+
+#[tauri::command]
+fn make_skill_global(tool: Tool, name: String) -> Result<skills::SkillsState, String> {
+    let sk = skills::Skills::from_env();
+    sk.make_global(tool, &name)?;
+    Ok(sk.state())
+}
+
+#[tauri::command]
+fn create_skill(name: String, description: String) -> Result<skills::SkillsState, String> {
+    let sk = skills::Skills::from_env();
+    let n = sk.create(&name, &description)?;
+    let _ = reveal(&sk.dir_of(&n));
+    Ok(sk.state())
+}
+
+#[tauri::command]
+fn open_skill_folder(name: Option<String>) -> Result<(), String> {
+    let sk = skills::Skills::from_env();
+    let dir = match name {
+        Some(n) => sk.dir_of(&n),
+        None => sk.root().to_path_buf(),
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    reveal(&dir)
+}
+
+/// Parâmetros extras usados sempre que o perfil é aberto.
+#[tauri::command]
+fn set_profile_args(app: AppHandle, tool: Tool, name: String, args: String) -> Result<AppState, String> {
+    Store::from_env(tool).dir_of(&name)?; // valida
+    settings::set_args(tool, &name, &args)?;
     sync_menu(&app)
 }
 
@@ -206,7 +263,13 @@ pub fn run() {
             rename_profile,
             delete_profile,
             open_tool,
-            open_folder
+            open_folder,
+            set_profile_args,
+            get_skills,
+            set_skill_link,
+            make_skill_global,
+            create_skill,
+            open_skill_folder
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o aplicativo");

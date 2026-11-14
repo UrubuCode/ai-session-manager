@@ -6,8 +6,10 @@ import {
 } from "./api";
 import { Dialog, type DialogRequest } from "./Dialog";
 import { Updater } from "./Updater";
+import { SkillsView } from "./SkillsView";
 
 type Menu = "arquivo" | "perfil" | null;
+type View = "perfis" | "skills";
 interface Ctx { x: number; y: number; name: string }
 
 const TOOL_KEY = "selectedTool";
@@ -23,6 +25,7 @@ export default function App() {
   const [dialog, setDialog] = useState<DialogRequest | null>(null);
   const [menu, setMenu] = useState<Menu>(null);
   const [ctx, setCtx] = useState<Ctx | null>(null);
+  const [view, setView] = useState<View>("perfis");
   const busy = useRef(false);
 
   const ask = (r: Omit<DialogRequest, "resolve">) =>
@@ -119,6 +122,18 @@ export default function App() {
     if (s) { setState(s); setSelected(n); }
   };
 
+  const editArgs = async (name = selected) => {
+    const p = profiles.find((x) => x.name === name);
+    if (!name || !p) return;
+    const args = await ask({
+      message: `Parâmetros extras ao abrir ${tLabel} no perfil "${label(p)}" (ex.: --model opus). Deixe vazio para remover.`,
+      input: p.extraArgs ?? "", okLabel: "Salvar",
+    });
+    if (args === null) return;
+    const s = await run(() => api.setArgs(t, name, args), args ? `Parâmetros de "${label(p)}" salvos` : `Parâmetros de "${label(p)}" removidos`);
+    if (s) setState(s);
+  };
+
   const remove = async (name = selected) => {
     const p = profiles.find((x) => x.name === name);
     if (!name || !p || p.isDefaultProfile) return;
@@ -135,6 +150,7 @@ export default function App() {
   const keys = useRef<(e: KeyboardEvent) => void>();
   keys.current = (e) => {
     if (dialog || e.target instanceof HTMLInputElement) return;
+    if (view !== "perfis") return;
     const list = profiles.map((p) => p.name);
     const k = e.key, ctrl = e.ctrlKey, lk = k.toLowerCase();
     const n = Number(k);
@@ -186,6 +202,14 @@ export default function App() {
           <Item label="Renomear…" hint="F2" onClick={() => rename()} disabled={!profile || profile.isDefaultProfile} />
           <Item label="Excluir…" hint="Del" onClick={() => remove()} disabled={!profile || profile.isDefaultProfile} danger />
         </MenuButton>
+        <div className="views" role="tablist">
+          {(["perfis", "skills"] as View[]).map((v) => (
+            <button key={v} role="tab" aria-selected={view === v} className={"view-btn" + (view === v ? " active" : "")}
+              onClick={() => setView(v)}>
+              {v === "perfis" ? "Perfis" : "Skills"}
+            </button>
+          ))}
+        </div>
         <div className="counters">
           <span>{totalProfiles} perfis</span>
           {tool?.supportsDefault && <span>{tLabel}: <b>{current ? label(current) : "pasta externa"}</b></span>}
@@ -194,6 +218,14 @@ export default function App() {
 
       <Updater />
 
+      {view === "skills" && state && (
+        <div className="main scroll">
+          <SkillsView ask={ask} setStatus={setStatus}
+            installed={Object.fromEntries(state.tools.map((x) => [x.tool, x.installed])) as Record<ToolId, boolean>} />
+        </div>
+      )}
+
+      {view === "perfis" && <>
       <div className="tabs" role="tablist">
         {state?.tools.map((x, i) => (
           <button key={x.tool} role="tab" aria-selected={x.tool === t}
@@ -239,10 +271,12 @@ export default function App() {
           {profile && tool ? (
             <Detail p={profile} tool={tool} title={label(profile)}
               onDefault={() => setDefault()} onOpen={() => openTool()} onFolder={() => openFolder()}
-              onRename={() => rename()} onDelete={() => remove()} />
+              onRename={() => rename()} onDelete={() => remove()} onArgs={() => editArgs()} />
           ) : <div className="placeholder">Selecione um perfil</div>}
         </section>
       </div>
+
+      </>}
 
       <footer className={"statusbar" + (status.error ? " error" : "")}>
         <span className="status-text" title={status.text}>{status.text}</span>
@@ -320,6 +354,7 @@ function ProfileRow(props: {
 function Detail(props: {
   p: ProfileInfo; tool: ToolState; title: string;
   onDefault: () => void; onOpen: () => void; onFolder: () => void; onRename: () => void; onDelete: () => void;
+  onArgs: () => void;
 }) {
   const { p, tool } = props;
   const st = sessionStatus(p);
@@ -361,6 +396,12 @@ function Detail(props: {
             <div className="chips">{p.scopes.map((s) => <span key={s} className="chip">{s}</span>)}</div>
           </Card>
         )}
+        <Card title="Parâmetros ao abrir" wide>
+          <div className="args-row">
+            <code className="selectable">{tool.command} {p.extraArgs ?? <span className="muted-inline">(nenhum extra)</span>}</code>
+            <button className="small ghost" onClick={props.onArgs}>Editar</button>
+          </div>
+        </Card>
         <Card title="Pasta" wide><code className="selectable">{p.path}</code></Card>
       </div>
 

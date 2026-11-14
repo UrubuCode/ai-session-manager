@@ -21,6 +21,7 @@ export interface ProfileInfo {
   refreshExpiresAt: number | null;
   scopes: string[];
   details: Detail[];
+  extraArgs: string | null;
   error: string | null;
 }
 
@@ -55,6 +56,7 @@ export const api = {
     invoke<AppState>("rename_profile", { tool, old, new: newName }),
   deleteProfile: (tool: ToolId, name: string) => invoke<AppState>("delete_profile", { tool, name }),
   openTool: (tool: ToolId, name: string) => invoke<void>("open_tool", { tool, name }),
+  setArgs: (tool: ToolId, name: string, args: string) => invoke<AppState>("set_profile_args", { tool, name, args }),
   openFolder: (tool: ToolId, name: string) => invoke<void>("open_folder", { tool, name }),
 };
 
@@ -75,3 +77,38 @@ export function formatLeft(ms: number): string {
 export function formatDate(ms: number | null): string {
   return ms && ms > 0 ? new Date(ms).toLocaleString("pt-BR") : "—";
 }
+
+// ---------------------------------------------------------------- skills globais
+
+export type LinkState = "on" | "off" | "conflict";
+
+export interface GlobalSkill {
+  name: string;
+  description: string | null;
+  path: string;
+  links: { tool: ToolId; state: LinkState }[];
+}
+
+export interface LocalSkill {
+  tool: ToolId;
+  name: string;
+  description: string | null;
+  path: string;
+}
+
+export interface SkillsState {
+  root: string;
+  global: GlobalSkill[];
+  local: LocalSkill[];
+}
+
+export const skillsApi = {
+  get: () => invoke<SkillsState>("get_skills"),
+  setLink: (name: string, tool: ToolId, enabled: boolean) =>
+    invoke<SkillsState>("set_skill_link", { name, tool, enabled }),
+  makeGlobal: (tool: ToolId, name: string) => invoke<SkillsState>("make_skill_global", { tool, name }),
+  create: (name: string, description: string) => invoke<SkillsState>("create_skill", { name, description }),
+  openFolder: (name?: string) => invoke<void>("open_skill_folder", { name: name ?? null }),
+};
+
+export const TOOL_LABEL: Record<ToolId, string> = { claude: "Claude Code", codex: "Codex", agy: "Antigravity" };
