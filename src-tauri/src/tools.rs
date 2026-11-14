@@ -102,8 +102,9 @@ impl Tool {
             // diferentes se enxergam (ListAgents/SendMessage).
             Tool::Claude => &["skills", "plugins", "agents", "commands", "sessions"],
             Tool::Codex => &["skills", "plugins", "rules"],
-            // home falsa: comandos do agente continuam achando as chaves SSH.
-            Tool::Agy => &[".ssh"],
+            // home falsa: comandos do agente continuam achando as chaves SSH, e
+            // as skills do usuário (incluindo as globais) aparecem em todo perfil.
+            Tool::Agy => &[".ssh", ".gemini/config/skills"],
         }
     }
 
@@ -134,6 +135,15 @@ impl Tool {
     }
 
     /// A ferramenta está instalada (comando encontrado no PATH)?
+    /// Pasta de skills do usuário (formato SKILL.md) na instalação original.
+    pub fn skills_dir(self, home: &Path) -> PathBuf {
+        match self {
+            Tool::Claude => home.join(".claude").join("skills"),
+            Tool::Codex => home.join(".codex").join("skills"),
+            Tool::Agy => home.join(".gemini").join("config").join("skills"),
+        }
+    }
+
     pub fn installed(self) -> bool {
         which(self.command()).is_some()
     }

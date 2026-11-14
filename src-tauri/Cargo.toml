@@ -1,6 +1,6 @@
 [package]
 name = "ai-session-manager"
-version = "3.3.0"
+version = "3.4.0"
 description = "Gerenciador de perfis de ferramentas de IA (Claude Code, Codex, Antigravity)"
 edition = "2021"
 
@@ -21,6 +21,7 @@ tauri-plugin-process = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-notification = "2"
 base64 = "0.22"
+same-file = "1"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
