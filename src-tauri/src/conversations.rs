@@ -13,10 +13,10 @@
 use crate::links::{is_link, make_dir_link, remove_link};
 use crate::profiles::{ProfileInfo, Store};
 use crate::tools::Tool;
-use serde::Serialize;
-use std::collections::BTreeMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -46,7 +46,8 @@ pub struct Conversation {
     pub project: String,
     /// Pasta real do projeto, quando registrada na conversa.
     pub cwd: Option<String>,
-    pub title: String,
+    /// `None` enquanto a conversa ainda não foi analisada (ver `analyze`).
+    pub title: Option<String>,
     pub updated_at: i64,
     pub size: u64,
     pub profiles: Vec<ProfilePresence>,
@@ -61,6 +62,54 @@ pub struct ConversationsState {
     pub note: Option<String>,
     pub profiles: Vec<String>,
     pub conversations: Vec<Conversation>,
+    /// Quantas conversas ainda não têm título (serão analisadas em segundo plano).
+    pub pending: usize,
+}
+
+/// Título/pasta descobertos de uma conversa (enviados em lotes à interface).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Described {
+    pub project: String,
+    pub id: String,
+    pub title: String,
+    pub cwd: Option<String>,
+}
+
+// ------------------------------------------------------------------ cache de títulos
+
+/// Cache em `~/.ai-sessions/conversation-cache.json`: chave = caminho + data +
+/// tamanho do arquivo, então uma conversa alterada é analisada de novo.
+#[derive(Default, Serialize, Deserialize)]
+struct Cache(HashMap<String, (String, Option<String>)>);
+
+fn default_cache_file() -> PathBuf {
+    dirs::home_dir().unwrap_or_default().join(".ai-sessions").join("conversation-cache.json")
+}
+
+fn cache_key(file: &Path) -> String {
+    let m = fs::metadata(file).ok();
+    format!(
+        "{}|{}|{}",
+        file.display(),
+        m.as_ref().map(|m| m.len()).unwrap_or(0),
+        modified_ms(file)
+    )
+}
+
+impl Cache {
+    fn load(file: &Path) -> Self {
+        fs::read(file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    }
+    fn save(&self, f: &Path) {
+        if let Some(d) = f.parent() {
+            let _ = fs::create_dir_all(d);
+        }
+        let tmp = f.with_extension("json.tmp");
+        if fs::write(&tmp, serde_json::to_vec(self).unwrap_or_default()).is_ok() {
+            let _ = fs::rename(&tmp, f);
+        }
+    }
 }
 
 // ------------------------------------------------------------------ adaptadores
@@ -114,13 +163,21 @@ fn scan(tool: Tool, profile_dir: &Path) -> Vec<Found> {
     out
 }
 
-/// Título e pasta do projeto a partir do começo do arquivo (lê no máximo ~400 linhas).
+/// Até onde ler cada conversa para achar o título (o resto pode ter MB).
+const DESCRIBE_BYTES: u64 = 128 * 1024;
+/// Linhas maiores que isso (saídas de ferramentas) são puladas sem analisar.
+const MAX_LINE: usize = 32 * 1024;
+
+/// Título e pasta do projeto a partir do começo do arquivo.
 fn describe(file: &Path) -> (String, Option<String>) {
     let mut title: Option<String> = None;
     let mut summary: Option<String> = None;
     let mut cwd: Option<String> = None;
     if let Ok(f) = fs::File::open(file) {
-        for line in BufReader::new(f).lines().take(400).map_while(Result::ok) {
+        for line in BufReader::new(f.take(DESCRIBE_BYTES)).lines().map_while(Result::ok) {
+            if line.len() > MAX_LINE {
+                continue;
+            }
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if cwd.is_none() {
                 cwd = v.get("cwd").and_then(|c| c.as_str()).map(String::from);
@@ -170,16 +227,24 @@ fn same_file(a: &Path, b: &Path) -> bool {
     same_file::is_same_file(a, b).unwrap_or(false)
 }
 
+/// (projeto, id), arquivos por perfil e o arquivo principal.
+type Indexed = ((String, String), Vec<(String, PathBuf)>, PathBuf);
+
 // ------------------------------------------------------------------ operações
 
 pub struct Conversations {
     tool: Tool,
     profiles: Vec<(String, PathBuf)>,
+    cache_file: PathBuf,
 }
 
 impl Conversations {
     pub fn new(tool: Tool, profiles: &[ProfileInfo]) -> Self {
-        Self { tool, profiles: profiles.iter().map(|p| (p.name.clone(), PathBuf::from(&p.path))).collect() }
+        Self {
+            tool,
+            profiles: profiles.iter().map(|p| (p.name.clone(), PathBuf::from(&p.path))).collect(),
+            cache_file: default_cache_file(),
+        }
     }
 
     pub fn from_env(tool: Tool) -> Self {
@@ -195,24 +260,46 @@ impl Conversations {
             .ok_or_else(|| format!("Perfil '{profile}' não encontrado."))
     }
 
-    pub fn state(&self) -> ConversationsState {
-        let names: Vec<String> = self.profiles.iter().map(|(n, _)| n.clone()).collect();
-        if let Err(note) = supported(self.tool) {
-            return ConversationsState { tool: self.tool, supported: false, note: Some(note), profiles: names, conversations: vec![] };
-        }
-        // (projeto, id) → arquivos por perfil
+    /// (projeto, id) → arquivos por perfil, e o arquivo principal de cada um.
+    fn index(&self) -> Vec<Indexed> {
         let mut map: BTreeMap<(String, String), Vec<(String, PathBuf)>> = BTreeMap::new();
         for (name, dir) in &self.profiles {
             for f in scan(self.tool, dir) {
                 map.entry((f.project, f.id)).or_default().push((name.clone(), f.file));
             }
         }
-        let mut conversations: Vec<Conversation> = map
-            .into_iter()
-            .map(|((project, id), files)| {
+        map.into_iter()
+            .map(|(k, files)| {
                 // a versão "principal" é a modificada mais recentemente
                 let main = files.iter().max_by_key(|(_, p)| modified_ms(p)).unwrap().1.clone();
-                let (title, cwd) = describe(&main);
+                (k, files, main)
+            })
+            .collect()
+    }
+
+    /// Lista rápida: só metadados dos arquivos + títulos já em cache. Não lê o
+    /// conteúdo das conversas (isso fica para `analyze`, em segundo plano).
+    pub fn state(&self) -> ConversationsState {
+        let names: Vec<String> = self.profiles.iter().map(|(n, _)| n.clone()).collect();
+        if let Err(note) = supported(self.tool) {
+            return ConversationsState {
+                tool: self.tool,
+                supported: false,
+                note: Some(note),
+                profiles: names,
+                conversations: vec![],
+                pending: 0,
+            };
+        }
+        let cache = Cache::load(&self.cache_file);
+        let mut conversations: Vec<Conversation> = self
+            .index()
+            .into_iter()
+            .map(|((project, id), files, main)| {
+                let (title, cwd) = match cache.0.get(&cache_key(&main)) {
+                    Some((t, c)) => (Some(t.clone()), c.clone()),
+                    None => (None, None),
+                };
                 let profiles = names
                     .iter()
                     .map(|n| {
@@ -236,7 +323,49 @@ impl Conversations {
             })
             .collect();
         conversations.sort_by_key(|c| std::cmp::Reverse(c.updated_at));
-        ConversationsState { tool: self.tool, supported: true, note: None, profiles: names, conversations }
+        let pending = conversations.iter().filter(|c| c.title.is_none()).count();
+        ConversationsState { tool: self.tool, supported: true, note: None, profiles: names, conversations, pending }
+    }
+
+    /// Analisa (lê o começo) das conversas sem título em cache, das mais
+    /// recentes para as mais antigas, chamando `on_batch` a cada `batch`
+    /// conversas. `cancel` permite parar (ex.: usuário trocou de aba).
+    pub fn analyze(
+        &self,
+        batch: usize,
+        mut on_batch: impl FnMut(Vec<Described>, usize),
+        cancel: impl Fn() -> bool,
+    ) {
+        if supported(self.tool).is_err() {
+            return;
+        }
+        let mut cache = Cache::load(&self.cache_file);
+        let mut todo: Vec<_> = self
+            .index()
+            .into_iter()
+            .filter(|(_, _, main)| !cache.0.contains_key(&cache_key(main)))
+            .collect();
+        todo.sort_by_key(|(_, _, main)| std::cmp::Reverse(modified_ms(main)));
+        let mut done = 0;
+        let mut buf = vec![];
+        for ((project, id), _, main) in todo {
+            if cancel() {
+                break;
+            }
+            let (title, cwd) = describe(&main);
+            cache.0.insert(cache_key(&main), (title.clone(), cwd.clone()));
+            buf.push(Described { project, id, title, cwd });
+            done += 1;
+            if buf.len() >= batch {
+                on_batch(std::mem::take(&mut buf), done);
+            }
+        }
+        if !buf.is_empty() {
+            on_batch(buf, done);
+        }
+        // remove do cache arquivos que não existem mais
+        cache.0.retain(|k, _| k.split('|').next().is_some_and(|p| Path::new(p).is_file()));
+        cache.save(&self.cache_file);
     }
 
     /// Arquivo principal (mais recente) e o perfil que o tem.
@@ -336,7 +465,8 @@ mod tests {
         fs::create_dir_all(&a).unwrap();
         fs::create_dir_all(&b).unwrap();
         conv(&a, "proj", "s1", "implementar o goal");
-        let c = Conversations { tool: Tool::Claude, profiles: vec![("a".into(), a), ("b".into(), b)] };
+        let cache_file = d.path().join("cache.json");
+        let c = Conversations { tool: Tool::Claude, profiles: vec![("a".into(), a), ("b".into(), b)], cache_file };
         (d, c)
     }
 
@@ -345,8 +475,16 @@ mod tests {
         let (d, c) = setup();
         let st = c.state();
         assert_eq!(st.conversations.len(), 1);
+        assert!(st.conversations[0].title.is_none(), "lista rápida não lê o conteúdo");
+        assert_eq!(st.pending, 1);
+        let mut got = vec![];
+        c.analyze(10, |b, n| got.push((b, n)), || false);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0[0].title, "implementar o goal");
+        let st = c.state();
+        assert_eq!(st.pending, 0, "título veio do cache");
         let cv = &st.conversations[0];
-        assert_eq!(cv.title, "implementar o goal");
+        assert_eq!(cv.title.as_deref(), Some("implementar o goal"));
         assert_eq!(cv.cwd.as_deref(), Some(r"C:\proj"));
         assert_eq!(cv.profiles[1].state, Presence::Off);
 
@@ -392,7 +530,7 @@ mod tests {
 
     #[test]
     fn unsupported_tools_report_note() {
-        let c = Conversations { tool: Tool::Codex, profiles: vec![] };
+        let c = Conversations { tool: Tool::Codex, profiles: vec![], cache_file: PathBuf::from("nao-usado.json") };
         let st = c.state();
         assert!(!st.supported && st.note.is_some());
     }

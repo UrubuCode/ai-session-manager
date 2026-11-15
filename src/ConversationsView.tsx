@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { convApi, TOOL_LABEL, type Conversation, type ConversationsState, type ToolId } from "./api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { convApi, TOOL_LABEL, type AnalyzeProgress, type Conversation, type ConversationsState, type ToolId } from "./api";
 
 const TOOLS: ToolId[] = ["claude", "codex", "agy"];
 const when = (ms: number) => {
@@ -37,13 +38,63 @@ export function ConversationsView(props: {
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>(prefs.sort ?? { key: "date", desc: true });
   const [pageSize, setPageSize] = useState<number>(prefs.pageSize ?? 50);
   const [page, setPage] = useState(0);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const req = useRef(0);
   const fail = (e: unknown) => props.setStatus({ text: String(e), error: true });
+
+  /** Aplica um estado novo sem perder títulos que já chegaram (o cache só é
+   *  gravado no fim da análise). */
+  const applyState = useCallback((next: ConversationsState) => {
+    setState((prev) => {
+      if (!prev || prev.tool !== next.tool) return next;
+      const known = new Map(prev.conversations.filter((c) => c.title !== null).map((c) => [c.project + "/" + c.id, c]));
+      return {
+        ...next,
+        conversations: next.conversations.map((c) => {
+          const k = known.get(c.project + "/" + c.id);
+          return c.title === null && k ? { ...c, title: k.title, cwd: c.cwd ?? k.cwd } : c;
+        }),
+      };
+    });
+  }, []);
 
   const load = useCallback(() => {
     setState(null);
-    convApi.get(tool).then(setState).catch(fail);
+    setProgress(null);
+    const myReq = Date.now();
+    req.current = myReq;
+    convApi
+      .get(tool)
+      .then((s) => {
+        if (req.current !== myReq) return;
+        setState(s);
+        if (s.supported && s.pending > 0) {
+          // títulos em segundo plano: a lista já aparece, eles vão chegando
+          setProgress({ done: 0, total: s.pending });
+          convApi.analyze(tool, myReq).catch(fail);
+        }
+      })
+      .catch(fail);
   }, [tool]);
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const un = listen<AnalyzeProgress>("conversations-progress", ({ payload: p }) => {
+      if (p.req !== req.current) return;
+      if (p.items.length) {
+        const byKey = new Map(p.items.map((d) => [d.project + "/" + d.id, d]));
+        setState((s) => s && {
+          ...s,
+          conversations: s.conversations.map((c) => {
+            const d = byKey.get(c.project + "/" + c.id);
+            return d ? { ...c, title: d.title, cwd: c.cwd ?? d.cwd } : c;
+          }),
+        });
+      }
+      setProgress((pr) => (p.finished ? null : { done: p.done, total: pr?.total ?? p.done }));
+    });
+    return () => { un.then((f) => f()); };
+  }, []);
 
   // ao trocar de ferramenta, filtros que dependem dela deixam de valer
   useEffect(() => { setProject(""); setProfileFilter(""); setPage(0); }, [tool]);
@@ -55,14 +106,14 @@ export function ConversationsView(props: {
 
   const toggle = async (c: Conversation, profile: string, on: boolean) => {
     try {
-      setState(await convApi.set(tool, c.project, c.id, profile, on));
+      applyState(await convApi.set(tool, c.project, c.id, profile, on));
       props.setStatus({ text: on ? `Conversa ligada ao perfil "${profile}"` : `Conversa removida do perfil "${profile}"` });
     } catch (e) { fail(e); }
   };
 
   const resync = async (c: Conversation) => {
     try {
-      setState(await convApi.resync(tool, c.project, c.id));
+      applyState(await convApi.resync(tool, c.project, c.id));
       props.setStatus({ text: "Cópias juntadas na versão mais recente (as antigas ficaram como .bak)" });
     } catch (e) { fail(e); }
   };
@@ -89,14 +140,15 @@ export function ConversationsView(props: {
       if (status === "shared" && n < 2) return false;
       if (status === "single" && n !== 1) return false;
       if (status === "diverged" && !c.profiles.some((p) => p.state === "diverged")) return false;
-      if (q && !(c.title.toLowerCase().includes(q) || (c.cwd ?? c.project).toLowerCase().includes(q) || c.id.toLowerCase().startsWith(q)))
+      if (q && !((c.title ?? "").toLowerCase().includes(q) || (c.cwd ?? c.project).toLowerCase().includes(q) || c.id.toLowerCase().startsWith(q)))
         return false;
       return true;
     });
     const dir = sort.desc ? -1 : 1;
     const cmp: Record<SortKey, (a: Conversation, b: Conversation) => number> = {
       date: (a, b) => a.updatedAt - b.updatedAt,
-      title: (a, b) => a.title.localeCompare(b.title, "pt-BR"),
+      title: (a, b) =>
+        a.title === null ? (b.title === null ? 0 : 1) : b.title === null ? -1 : a.title.localeCompare(b.title, "pt-BR"),
       project: (a, b) => projectName(a).localeCompare(projectName(b), "pt-BR") || b.updatedAt - a.updatedAt,
       size: (a, b) => a.size - b.size,
       profiles: (a, b) => present(a) - present(b) || b.updatedAt - a.updatedAt,
@@ -153,6 +205,13 @@ export function ConversationsView(props: {
             <div className="banner">Crie pelo menos mais um perfil de {TOOL_LABEL[tool]} para sincronizar conversas entre contas.</div>
           )}
 
+          {progress && (
+            <div className="progress" title="Os títulos ficam em cache: da próxima vez só as conversas novas são analisadas">
+              <div className="progress-bar" style={{ width: `${Math.round((progress.done / Math.max(1, progress.total)) * 100)}%` }} />
+              <span>Analisando títulos… {progress.done} de {progress.total}</span>
+            </div>
+          )}
+
           <div className="filters">
             <input className="search grow" placeholder="Buscar por título, pasta ou ID…" value={query}
               onChange={(e) => setQuery(e.target.value)} />
@@ -199,7 +258,9 @@ export function ConversationsView(props: {
                 return (
                   <tr key={c.project + c.id}>
                     <td className="conv-cell">
-                      <div className="conv-title" title={c.title}>{c.title}</div>
+                      {c.title === null
+                        ? <div className="conv-title loading-text">analisando…</div>
+                        : <div className="conv-title" title={c.title}>{c.title}</div>}
                       <div className="skill-desc"><code>{c.id.slice(0, 8)}</code></div>
                     </td>
                     <td className="nowrap" title={c.cwd ?? c.project}>{projectName(c)}</td>

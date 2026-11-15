@@ -199,3 +199,9 @@ select {
   border-radius: 0; font-size: 12px; white-space: nowrap; cursor: pointer;
 }
 .statusbar .version:hover { color: var(--accent); }
+.progress { position: relative; height: 22px; border-radius: 7px; background: var(--hover); overflow: hidden; margin: 8px 0 2px; font-size: 12px; }
+.progress-bar { position: absolute; inset: 0 auto 0 0; background: var(--accent-soft); transition: width .25s; }
+.progress span { position: relative; padding: 0 10px; line-height: 22px; color: var(--muted); }
+.loading-text { color: var(--muted); font-style: italic; font-weight: 400; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .loading-text { animation: none; } }

@@ -121,7 +121,8 @@ export interface Conversation {
   id: string;
   project: string;
   cwd: string | null;
-  title: string;
+  /** null enquanto ainda não foi analisada (os títulos chegam por evento). */
+  title: string | null;
   updatedAt: number;
   size: number;
   profiles: { profile: string; state: Presence }[];
@@ -133,6 +134,22 @@ export interface ConversationsState {
   note: string | null;
   profiles: string[];
   conversations: Conversation[];
+  pending: number;
+}
+
+export interface Described {
+  project: string;
+  id: string;
+  title: string;
+  cwd: string | null;
+}
+
+export interface AnalyzeProgress {
+  req: number;
+  tool: ToolId;
+  items: Described[];
+  done: number;
+  finished: boolean;
 }
 
 export const convApi = {
@@ -141,4 +158,6 @@ export const convApi = {
     invoke<ConversationsState>("set_conversation_sync", { tool, project, id, profile, enabled }),
   resync: (tool: ToolId, project: string, id: string) =>
     invoke<ConversationsState>("resync_conversation", { tool, project, id }),
+  /** Lê os títulos em segundo plano; o progresso chega pelo evento "conversations-progress". */
+  analyze: (tool: ToolId, req: number) => invoke<void>("analyze_conversations", { tool, req }),
 };

@@ -55,7 +55,7 @@ export function SkillsView(props: {
   const local = state?.local.filter((s) => match(s.name, s.description)) ?? [];
 
   return (
-    <div className="page">
+    <div className="page wide">
       <div className="page-head">
         <div>
           <h2>Skills globais</h2>

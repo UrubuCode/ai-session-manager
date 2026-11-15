@@ -159,29 +159,78 @@ fn open_skill_folder(name: Option<String>) -> Result<(), String> {
 
 // ---------------------------------------------------------------- conversas
 
-#[tauri::command]
-fn get_conversations(tool: Tool) -> conversations::ConversationsState {
-    conversations::Conversations::from_env(tool).state()
+// Os comandos de conversas leem muitos arquivos: rodam fora da thread da janela
+// (comandos `async` + `spawn_blocking`), senão a interface congela.
+
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn set_conversation_sync(
+async fn get_conversations(tool: Tool) -> Result<conversations::ConversationsState, String> {
+    blocking(move || conversations::Conversations::from_env(tool).state()).await
+}
+
+#[tauri::command]
+async fn set_conversation_sync(
     tool: Tool,
     project: String,
     id: String,
     profile: String,
     enabled: bool,
 ) -> Result<conversations::ConversationsState, String> {
-    let c = conversations::Conversations::from_env(tool);
-    c.set(&project, &id, &profile, enabled)?;
-    Ok(c.state())
+    blocking(move || {
+        let c = conversations::Conversations::from_env(tool);
+        c.set(&project, &id, &profile, enabled)?;
+        Ok(c.state())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn resync_conversation(tool: Tool, project: String, id: String) -> Result<conversations::ConversationsState, String> {
-    let c = conversations::Conversations::from_env(tool);
-    c.resync(&project, &id)?;
-    Ok(c.state())
+async fn resync_conversation(tool: Tool, project: String, id: String) -> Result<conversations::ConversationsState, String> {
+    blocking(move || {
+        let c = conversations::Conversations::from_env(tool);
+        c.resync(&project, &id)?;
+        Ok(c.state())
+    })
+    .await?
+}
+
+/// Pedido de análise mais recente; um pedido novo cancela o anterior.
+static ANALYZE_REQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalyzeProgress {
+    req: u64,
+    tool: Tool,
+    items: Vec<conversations::Described>,
+    done: usize,
+    finished: bool,
+}
+
+/// Lê os títulos das conversas ainda sem cache, em segundo plano, mandando
+/// lotes pelo evento `conversations-progress` conforme analisa.
+#[tauri::command]
+async fn analyze_conversations(app: AppHandle, tool: Tool, req: u64) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    use tauri::Emitter;
+    ANALYZE_REQ.store(req, Ordering::SeqCst);
+    blocking(move || {
+        let c = conversations::Conversations::from_env(tool);
+        let mut last = 0;
+        c.analyze(
+            15,
+            |items, done| {
+                last = done;
+                let _ = app.emit("conversations-progress", AnalyzeProgress { req, tool, items, done, finished: false });
+            },
+            || ANALYZE_REQ.load(Ordering::SeqCst) != req,
+        );
+        let _ = app.emit("conversations-progress", AnalyzeProgress { req, tool, items: vec![], done: last, finished: true });
+    })
+    .await
 }
 
 /// Parâmetros extras usados sempre que o perfil é aberto.
@@ -300,7 +349,8 @@ pub fn run() {
             open_skill_folder,
             get_conversations,
             set_conversation_sync,
-            resync_conversation
+            resync_conversation,
+            analyze_conversations
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o aplicativo");
