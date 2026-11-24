@@ -134,7 +134,6 @@ impl Tool {
         }
     }
 
-    /// A ferramenta está instalada (comando encontrado no PATH)?
     /// Pasta de skills do usuário (formato SKILL.md) na instalação original.
     pub fn skills_dir(self, home: &Path) -> PathBuf {
         match self {
@@ -144,8 +143,9 @@ impl Tool {
         }
     }
 
+    /// A ferramenta está instalada (executável registrado, no PATH ou num local conhecido)?
     pub fn installed(self) -> bool {
-        which(self.command()).is_some()
+        crate::executables::resolve(self).is_some()
     }
 }
 

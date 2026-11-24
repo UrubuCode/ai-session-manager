@@ -10,8 +10,9 @@ import { Dialog, type DialogRequest } from "./Dialog";
 import { Updater } from "./Updater";
 import { SkillsView } from "./SkillsView";
 import { ConversationsView } from "./ConversationsView";
+import { ExecutablesView } from "./ExecutablesView";
 
-type View = "perfis" | "conversas" | "skills";
+type View = "perfis" | "conversas" | "skills" | "executaveis";
 interface Ctx { x: number; y: number; name: string }
 
 const TOOL_KEY = "selectedTool";
@@ -208,10 +209,10 @@ export default function App() {
     <div className="app" onContextMenu={(e) => e.preventDefault()}>
       <nav className="menubar" onClick={(e) => e.stopPropagation()}>
         <div className="views" role="tablist">
-          {(["perfis", "conversas", "skills"] as View[]).map((v) => (
+          {(["perfis", "conversas", "skills", "executaveis"] as View[]).map((v) => (
             <button key={v} role="tab" aria-selected={view === v} className={"view-btn" + (view === v ? " active" : "")}
               onClick={() => setView(v)}>
-              {v === "perfis" ? "Perfis" : v === "conversas" ? "Conversas" : "Skills"}
+              {v === "perfis" ? "Perfis" : v === "conversas" ? "Conversas" : v === "skills" ? "Skills" : "Executáveis"}
             </button>
           ))}
         </div>
@@ -236,12 +237,18 @@ export default function App() {
         </div>
       )}
 
+      {view === "executaveis" && (
+        <div className="main scroll">
+          <ExecutablesView setStatus={setStatus} onChanged={() => load()} />
+        </div>
+      )}
+
       {view === "perfis" && <>
       <div className="tabs" role="tablist">
         {state?.tools.map((x, i) => (
           <button key={x.tool} role="tab" aria-selected={x.tool === t}
             className={"tab" + (x.tool === t ? " active" : "") + (x.installed ? "" : " missing")}
-            title={(x.installed ? "" : `"${x.command}" não encontrado no PATH · `) + `Ctrl+${i + 1}`}
+            title={(x.installed ? (x.exePath ?? "") + " · " : `"${x.command}" não encontrado · `) + `Ctrl+${i + 1}`}
             onClick={() => chooseTool(x.tool)}>
             <ToolMark tool={x.tool} />
             <span>{x.label}</span>
@@ -252,7 +259,8 @@ export default function App() {
 
       {tool && !tool.installed && (
         <div className="banner">
-          O comando <code>{tool.command}</code> não foi encontrado. Você pode criar perfis, mas para usá-los instale o {tLabel} e reabra o app.
+          O executável <code>{tool.command}</code> não foi encontrado. Instale o {tLabel} ou{" "}
+          <button className="small ghost" onClick={() => setView("executaveis")}>registre o caminho</button>.
         </div>
       )}
       {tool?.envUnknown && (
@@ -400,7 +408,7 @@ function Detail(props: {
         )}
         <Card title="Parâmetros ao abrir" wide>
           <div className="args-row">
-            <code className="selectable">{tool.command} {p.extraArgs ?? <span className="muted-inline">(nenhum extra)</span>}</code>
+            <code className="selectable" title={tool.exePath ?? ""}>{tool.command} {p.extraArgs ?? <span className="muted-inline">(nenhum extra)</span>}</code>
             <button className="small ghost" onClick={props.onArgs}>Editar</button>
           </div>
         </Card>

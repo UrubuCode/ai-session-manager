@@ -1,5 +1,6 @@
 mod conversations;
 mod env;
+mod executables;
 mod explorer;
 mod links;
 mod profiles;
@@ -241,6 +242,21 @@ fn set_profile_args(app: AppHandle, tool: Tool, name: String, args: String) -> R
     sync_menu(&app)
 }
 
+// ---------------------------------------------------------------- executáveis
+
+#[tauri::command]
+fn get_executables() -> Vec<executables::ExeInfo> {
+    Tool::ALL.into_iter().map(executables::info).collect()
+}
+
+/// Registra o caminho do executável da ferramenta (`None` volta à busca automática).
+#[tauri::command]
+fn set_executable(app: AppHandle, tool: Tool, path: Option<String>) -> Result<Vec<executables::ExeInfo>, String> {
+    executables::set_custom(tool, path.as_deref())?;
+    sync_menu(&app)?;
+    Ok(get_executables())
+}
+
 #[tauri::command]
 fn open_tool(tool: Tool, name: String) -> Result<(), String> {
     do_open(tool, &name, None)
@@ -350,7 +366,9 @@ pub fn run() {
             get_conversations,
             set_conversation_sync,
             resync_conversation,
-            analyze_conversations
+            analyze_conversations,
+            get_executables,
+            set_executable
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o aplicativo");

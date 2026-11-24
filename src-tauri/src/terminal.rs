@@ -6,7 +6,6 @@
 //! funciona mesmo quando o Windows Terminal reaproveita uma janela existente.
 
 use crate::profiles::Store;
-use crate::tools::Tool;
 use base64::Engine;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -30,7 +29,7 @@ fn ps_quote(s: &str) -> String {
 }
 
 /// Script PowerShell que prepara o ambiente e roda a ferramenta.
-pub fn script(tool: Tool, env: &[(&str, Option<String>)], folder: &Path, color_hint: bool, args: &str) -> String {
+pub fn script(exe: &str, env: &[(&str, Option<String>)], folder: &Path, color_hint: bool, args: &str) -> String {
     let mut lines: Vec<String> = SESSION_MARKERS
         .iter()
         .map(|k| format!("Remove-Item Env:{k} -ErrorAction SilentlyContinue"))
@@ -46,7 +45,9 @@ pub fn script(tool: Tool, env: &[(&str, Option<String>)], folder: &Path, color_h
     }
     lines.push(format!("Set-Location -LiteralPath {}", ps_quote(&folder.display().to_string())));
     let args = args.trim();
-    lines.push(if args.is_empty() { tool.command().to_string() } else { format!("{} {args}", tool.command()) });
+    // `&` roda o caminho completo (com espaços); exe/cmd/ps1 funcionam igual.
+    let call = if exe.contains(['\\', '/']) { format!("& {}", ps_quote(exe)) } else { exe.to_string() };
+    lines.push(if args.is_empty() { call } else { format!("{call} {args}") });
     lines.join("; ")
 }
 
@@ -71,7 +72,10 @@ pub fn open(store: &Store, name: &str, cwd: Option<&Path>) -> Result<(), String>
         None => format!("{} [{name}] - {}", tool.short(), folder.display()),
     };
     let wt = windows_terminal();
-    let encoded = encode(&script(tool, &env, &folder, wt.is_none(), &args));
+    let exe = crate::executables::resolve(tool)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| tool.command().to_string());
+    let encoded = encode(&script(&exe, &env, &folder, wt.is_none(), &args));
 
     let mut cmd = match &wt {
         Some(wt) => {
@@ -103,7 +107,7 @@ mod tests {
     #[test]
     fn script_sets_and_removes_vars() {
         let s = script(
-            Tool::Agy,
+            "agy",
             &[("USERPROFILE", Some(r"C:\Users\o'neil\.agy-profiles\x".into())), ("CODEX_HOME", None)],
             Path::new(r"C:\proj"),
             true,
@@ -116,5 +120,7 @@ mod tests {
         assert!(s.trim_end().ends_with(r"agy --add-dir 'C:\x' --model y"), "{s}");
         // base64 sem ';' — o Windows Terminal trata ';' como separador
         assert!(!encode(&s).contains(';'));
+        let s = script(r"C:\Users\a b\.codex\.sandbox-bin\codex.exe", &[], Path::new(r"C:\p"), false, "");
+        assert!(s.ends_with(r"& 'C:\Users\a b\.codex\.sandbox-bin\codex.exe'"), "{s}");
     }
 }

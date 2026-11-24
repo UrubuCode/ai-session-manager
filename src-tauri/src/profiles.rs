@@ -51,6 +51,8 @@ pub struct ToolState {
     pub label: String,
     pub command: String,
     pub installed: bool,
+    /// Executável que será aberto (registrado no app, PATH ou local conhecido).
+    pub exe_path: Option<String>,
     pub supports_default: bool,
     pub env_var: Option<String>,
     pub profiles_root: String,
@@ -342,6 +344,7 @@ impl Store {
             tool: self.tool,
             label: self.tool.label().into(),
             command: self.tool.command().into(),
+            exe_path: crate::executables::resolve(self.tool).map(|p| p.display().to_string()),
             installed: self.tool.installed(),
             supports_default: self.tool.supports_default(),
             env_var: self.tool.env_var().map(String::from),

@@ -62,7 +62,7 @@ mod imp {
     fn tool_icon(tool: Tool, fallback: &str) -> String {
         let local = dirs::data_local_dir().unwrap_or_default();
         let official = match tool {
-            Tool::Claude => crate::tools::which("claude").filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe"))),
+            Tool::Claude => crate::executables::resolve(Tool::Claude).filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe"))),
             Tool::Codex => None,
             Tool::Agy => Some(local.join(r"Programs\antigravity\Antigravity.exe")).filter(|p| p.is_file()),
         };

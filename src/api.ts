@@ -30,6 +30,7 @@ export interface ToolState {
   label: string;
   command: string;
   installed: boolean;
+  exePath: string | null;
   supportsDefault: boolean;
   envVar: string | null;
   profilesRoot: string;
@@ -60,7 +61,31 @@ export const api = {
   openFolder: (tool: ToolId, name: string) => invoke<void>("open_folder", { tool, name }),
 };
 
-export type Tone = "ok" | "warn" | "bad" | "idle";
+// ---------------------------------------------------------------- executáveis
+
+export type ExeSource = "custom" | "path" | "known";
+
+export interface ExeCandidate {
+  path: string;
+  source: ExeSource;
+}
+
+export interface ExeInfo {
+  tool: ToolId;
+  label: string;
+  command: string;
+  custom: string | null;
+  customMissing: boolean;
+  resolved: ExeCandidate | null;
+  candidates: ExeCandidate[];
+}
+
+export const exeApi = {
+  get: () => invoke<ExeInfo[]>("get_executables"),
+  set: (tool: ToolId, path: string | null) => invoke<ExeInfo[]>("set_executable", { tool, path }),
+};
+
+export type Tone ="ok" | "warn" | "bad" | "idle";
 
 export function sessionStatus(p: ProfileInfo): { text: string; tone: Tone } {
   if (p.error) return { text: p.error, tone: "bad" };

@@ -205,3 +205,9 @@ select {
 .loading-text { color: var(--muted); font-style: italic; font-weight: 400; animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { .loading-text { animation: none; } }
+
+/* Executáveis */
+.exe-candidates { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.exe-candidates .args-row code { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.exe-input { margin-top: 12px; }
+.card-body .args-row { gap: 8px; }
