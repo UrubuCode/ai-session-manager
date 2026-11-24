@@ -1,6 +1,6 @@
 [package]
 name = "ai-session-manager"
-version = "3.5.0"
+version = "3.5.1"
 description = "Gerenciador de perfis de ferramentas de IA (Claude Code, Codex, Antigravity)"
 edition = "2021"
 

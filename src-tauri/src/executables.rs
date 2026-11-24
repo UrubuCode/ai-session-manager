@@ -214,8 +214,6 @@ fn tool_paths(tool: Tool, home: &Path) -> Vec<PathBuf> {
             local.join("AnthropicClaude").join("claude.exe"),
         ],
         Tool::Codex => vec![
-            // Extensão do VS Code (ChatGPT/Codex) instala o CLI aqui.
-            home.join(".codex").join(".sandbox-bin").join("codex.exe"),
             local.join("Programs").join("OpenAI").join("Codex").join("bin").join("codex.exe"),
             local.join("Programs").join("codex").join("codex.exe"),
         ],
@@ -260,6 +258,11 @@ fn extension_paths(tool: Tool, home: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Codex do `.sandbox-bin` (sem pacote completo): precisa de `--no-daemon`.
+pub fn needs_no_daemon(p: &Path) -> bool {
+    key(p).contains(r"\.sandbox-bin\")
+}
+
 fn key(p: &Path) -> String {
     p.to_string_lossy().replace('/', "\\").to_lowercase()
 }
@@ -286,6 +289,11 @@ pub fn candidates(tool: Tool) -> Vec<Candidate> {
     }
     for p in tool_paths(tool, &home).into_iter().chain(extension_paths(tool, &home)) {
         push(p, Source::Known);
+    }
+    if tool == Tool::Codex {
+        // Último recurso: o binário que a extensão do VS Code deixa aqui não tem o
+        // pacote completo e só roda com `--no-daemon` (ver `needs_no_daemon`).
+        push(home.join(".codex").join(".sandbox-bin").join("codex.exe"), Source::Known);
     }
     out
 }
@@ -338,6 +346,12 @@ mod tests {
         assert!(find_in_dir(d.path(), "codex").is_none());
         fs::write(d.path().join(if cfg!(windows) { "codex.exe" } else { "codex" }), "").unwrap();
         assert!(find_in_dir(d.path(), "codex").is_some());
+    }
+
+    #[test]
+    fn sandbox_bin_needs_no_daemon() {
+        assert!(needs_no_daemon(Path::new(r"C:\Users\danie\.codex\.sandbox-bin\codex.exe")));
+        assert!(!needs_no_daemon(Path::new(r"C:\Users\a\.vscode\extensions\openai.chatgpt-1\bin\windows-x86_64\codex.exe")));
     }
 
     #[test]

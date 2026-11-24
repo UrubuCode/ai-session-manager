@@ -75,6 +75,12 @@ pub fn open(store: &Store, name: &str, cwd: Option<&Path>) -> Result<(), String>
     let exe = crate::executables::resolve(tool)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| tool.command().to_string());
+    // O Codex do .sandbox-bin só roda sem o servidor em segundo plano.
+    let args = if crate::executables::needs_no_daemon(Path::new(&exe)) && !args.contains("--no-daemon") {
+        format!("--no-daemon {args}")
+    } else {
+        args
+    };
     let encoded = encode(&script(&exe, &env, &folder, wt.is_none(), &args));
 
     let mut cmd = match &wt {
